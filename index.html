@@ -626,18 +626,31 @@
     width: 100%;
     border-collapse: collapse;
     margin: 8px 0;
-    font-size: 11.5px;
+    font-size: 11px;
+    table-layout: fixed;
   }
+  .info-modal-body col.c1 { width: 48%; }
+  .info-modal-body col.c2 { width: 28%; }
+  .info-modal-body col.c3 { width: 24%; }
   .info-modal-body th,
   .info-modal-body td {
     border: 1px solid var(--color-border);
-    padding: 6px 7px;
+    padding: 6px 6px;
     text-align: left;
-    vertical-align: top;
+    vertical-align: middle;
+    word-break: keep-all;       /* 한글 음절 중간 줄바꿈 방지 */
+    line-height: 1.4;
   }
   .info-modal-body th {
     background: var(--bg-section);
     font-weight: 600;
+    text-align: center;
+  }
+  /* 수치 컬럼: 줄바꿈 방지 + 우측 정렬 */
+  .info-modal-body td:nth-child(2),
+  .info-modal-body td:nth-child(3) {
+    white-space: nowrap;
+    text-align: right;
   }
   .info-modal-body .note {
     font-size: 11px;
@@ -1085,7 +1098,8 @@
    ============================================================ */
 const PASSWORD_HASH = "bfd440002e11082e6bc491f41c59a3135ab7ac4d77cbc3f4a6a191975c2ebbe1";
 const UNLOCK_KEY = "ga_loan_calc_unlock";
-const UNLOCK_DAYS = 30;  // 잠금 해제 유지 기간(일). 접속할 때마다 입력받으려면 0으로 변경.
+// 잠금 해제는 브라우저 세션 단위로만 유지됩니다.
+// → 앱(또는 탭)을 완전히 닫았다가 다시 열면 비밀번호를 다시 입력해야 합니다.
 
 async function sha256Hex(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -1094,21 +1108,13 @@ async function sha256Hex(text) {
 
 function isUnlocked() {
   try {
-    const raw = localStorage.getItem(UNLOCK_KEY);
-    if (!raw) return false;
-    const expiry = Number(raw);
-    if (!expiry || Date.now() > expiry) {
-      localStorage.removeItem(UNLOCK_KEY);
-      return false;
-    }
-    return true;
+    return sessionStorage.getItem(UNLOCK_KEY) === "1";
   } catch (e) { return false; }
 }
 
 function setUnlocked() {
   try {
-    const days = UNLOCK_DAYS > 0 ? UNLOCK_DAYS : (1 / 24); // 0이면 1시간만 유지
-    localStorage.setItem(UNLOCK_KEY, String(Date.now() + days * 86400000));
+    sessionStorage.setItem(UNLOCK_KEY, "1");
   } catch (e) {}
 }
 
@@ -1153,7 +1159,7 @@ function setupLock() {
     if (e.key === "Enter") { e.preventDefault(); tryUnlock(); }
   });
   document.getElementById("lock-toggle").addEventListener("click", () => {
-    try { localStorage.removeItem(UNLOCK_KEY); } catch (e) {}
+    try { sessionStorage.removeItem(UNLOCK_KEY); } catch (e) {}
     showLock();
   });
   if (isUnlocked()) {
@@ -1460,15 +1466,15 @@ function loadState() {
     "c-region": "특별시, 수도권, 기타광역시",
     "c-credit": "BB+ 이상",
     "c-self": "0",
-    "c-other": "180,000,000",
+    "c-other": "0",
     "c-wage": "0",
-    "c-deposit": "25,000,000",
+    "c-deposit": "0",
     "i-appraisal": "500,000,000",
     "i-region": "전남",
     "i-self": "0",
-    "i-other": "180,000,000",
+    "i-other": "0",
     "i-wage": "0",
-    "i-deposit": "25,000,000",
+    "i-deposit": "0",
     "i-income": "80,000,000",
     "i-sales": "12,000,000",
     "i-industry": "운수업·도소매업"
@@ -1483,11 +1489,18 @@ function loadState() {
 
 function resetPanel(which) {
   if (which === "corp") {
-    ["c-appraisal","c-region","c-credit","c-self","c-other","c-wage","c-deposit"].forEach(id => $(id).value = "");
+    $("c-appraisal").value = "";
+    $("c-region").selectedIndex = 0;
+    $("c-credit").selectedIndex = 0;
+    // 선순위 채권 4개 항목은 0원으로 초기화 (대부분 0이라 매번 입력 번거로움 방지)
+    ["c-self","c-other","c-wage","c-deposit"].forEach(id => $(id).value = "0");
     $("panel-corp").classList.remove("show-results");
   } else {
-    ["i-appraisal","i-region","i-self","i-other","i-wage","i-deposit","i-income","i-sales","i-industry"].forEach(id => $(id).value = "");
+    $("i-appraisal").value = "";
     $("i-region").selectedIndex = 0;
+    ["i-self","i-other","i-wage","i-deposit"].forEach(id => $(id).value = "0");
+    $("i-income").value = "";
+    $("i-sales").value = "";
     $("i-industry").selectedIndex = 0;
     $("panel-indiv").classList.remove("show-results");
   }
@@ -1610,7 +1623,7 @@ const INFO_CONTENT = {
       <p><strong>일반기업</strong> — 아래 ①과 ② 중 큰 금액을 적용합니다.</p>
       <p>① 퇴직금산정내역서를 징구하지 않은 경우</p>
       <div class="formula">선순위퇴직금 = (연간총급여액 ÷ 12) × 공제비율(130%) × 공제기간</div>
-      <p class="note">공제기간 = '8.4개월 − (89.4월부터 업체설립연월까지 개월수 ÷ 12)' 또는 '3개월' 중 큰 수. 단, 업체설립이 89.4월 이전이면 8.4개월을 적용합니다.</p>
+      <p class="note">공제기간 = '250일 − (89년 4월부터 업체설립연월까지 개월수 ÷ 12)' 또는 '3개월' 중 큰 수. 단, 업체설립이 89년 4월 이전이면 250일을 적용합니다.</p>
       <p>② 퇴직금산정내역서를 징구한 경우</p>
       <div class="formula">선순위퇴직금 = 퇴직금산정내역서상 퇴직금총액 × 공제비율(130%)</div>
       <p class="note">외감법대상업체는 퇴직급여충당금적립비율을 고려하여 입력, 비외감 대상업체는 내역서상 퇴직금총액을 입력합니다.</p>
@@ -1631,6 +1644,7 @@ const INFO_CONTENT = {
     html: `
       <h4>지역별 최우선변제보증금</h4>
       <table>
+        <colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>
         <tr><th>지역</th><th>보증금 범위</th><th>최우선변제<br>보증금</th></tr>
         <tr><td>서울특별시</td><td>1억 6,500만원</td><td>5,500만원</td></tr>
         <tr><td>과밀억제권역(서울 제외), 용인시·화성시·세종시·김포시</td><td>1억 4,500만원</td><td>4,800만원</td></tr>
