@@ -1098,8 +1098,9 @@
    ============================================================ */
 const PASSWORD_HASH = "bfd440002e11082e6bc491f41c59a3135ab7ac4d77cbc3f4a6a191975c2ebbe1";
 const UNLOCK_KEY = "ga_loan_calc_unlock";
-// 잠금 해제는 브라우저 세션 단위로만 유지됩니다.
-// → 앱(또는 탭)을 완전히 닫았다가 다시 열면 비밀번호를 다시 입력해야 합니다.
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000;  // 자동 재잠금: 비밀번호 해제 후 10분
+// 잠금 해제는 (a) 탭이 살아있는 동안 + (b) 해제 시각으로부터 10분 이내에만 유지됩니다.
+// 둘 중 하나라도 깨지면 다음 진입 시 비밀번호를 다시 입력해야 합니다.
 
 async function sha256Hex(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -1108,14 +1109,28 @@ async function sha256Hex(text) {
 
 function isUnlocked() {
   try {
-    return sessionStorage.getItem(UNLOCK_KEY) === "1";
+    const raw = sessionStorage.getItem(UNLOCK_KEY);
+    if (!raw) return false;
+    const unlockedAt = Number(raw);
+    if (!unlockedAt || Date.now() - unlockedAt > LOCK_TIMEOUT_MS) {
+      sessionStorage.removeItem(UNLOCK_KEY);
+      return false;
+    }
+    return true;
   } catch (e) { return false; }
 }
 
 function setUnlocked() {
   try {
-    sessionStorage.setItem(UNLOCK_KEY, "1");
+    sessionStorage.setItem(UNLOCK_KEY, String(Date.now()));
   } catch (e) {}
+}
+
+// 만료됐는데 아직 계산기 화면이면 잠금 화면을 띄움 (idempotent)
+function ensureLockedIfExpired() {
+  if (isUnlocked()) return;
+  const screen = document.getElementById("lock-screen");
+  if (screen.classList.contains("hidden")) showLock();
 }
 
 function showLock() {
@@ -1167,6 +1182,12 @@ function setupLock() {
   } else {
     showLock();
   }
+
+  // 자동 재잠금: 화면 복귀 시 + 30초마다 체크
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") ensureLockedIfExpired();
+  });
+  setInterval(ensureLockedIfExpired, 30000);
 }
 
 /* ============================================================
